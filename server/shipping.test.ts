@@ -61,6 +61,8 @@ describe("shipping helpers", () => {
     ]);
     expect(fields.mbl_number.status).toBe("Conflict");
     expect(fields.mbl_number.value).toBe("");
+    expect(fields.mbl_number.sourceFile).toContain("Manifest.txt");
+    expect(fields.mbl_number.sourceFile).toContain("MBL.txt");
   });
 
   it("extracts PDF-style fields when labels are separated by spaces", async () => {

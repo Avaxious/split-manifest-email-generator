@@ -120,14 +120,14 @@ function normalizeCandidate(key: FieldKey, value: string): string {
 
 function extractCandidates(text: string, key: FieldKey): string[] {
   const labels: Record<FieldKey, string[]> = {
-    container_number: ["Container No", "Container Number", "CNTR No", "CNTR", "Equipment No", "Equipment Number"],
+    container_number: ["Container No", "Container Number", "Container", "CNTR No", "CNTR", "Equipment No", "Equipment Number"],
     seal_number: ["Seal No", "Seal Number", "Seal"],
-    mbl_number: ["MBL No", "MBL", "Master BL", "Master B/L", "Master Bill of Lading"],
-    etd_date: ["ETD", "Estimated Time of Departure", "Departure Date"],
-    vessel_name: ["Vessel Name", "Vessel", "VSL"],
-    voyage_number: ["Voyage No", "Voyage", "Voy", "VYG"],
-    pol: ["Port of Loading", "Port of Load", "Loading Port", "POL"],
-    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "Shipper"],
+    mbl_number: ["MBL No", "MBL Number", "MBL", "Master BL", "Master B/L", "Master Bill of Lading"],
+    etd_date: ["ETD", "ETD Date", "Estimated Time of Departure", "Departure Date"],
+    vessel_name: ["Vessel Name", "Vessel", "VSL", "Ship Name"],
+    voyage_number: ["Voyage No", "Voyage Number", "Voyage", "Voy", "VYG"],
+    pol: ["Port of Loading", "Port of Load", "Loading Port", "POL", "Load Port"],
+    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "Shipper Name", "Shipper", "S/O"],
   };
   const labelPattern = labels[key].slice().sort((a, b) => b.length - a.length).map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
   const allLabelPattern = Array.from(new Set(Object.values(labels).flat())).sort((a, b) => b.length - a.length).map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
@@ -180,21 +180,24 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
     }
   }
 
+  const checkedSources = Array.from(new Set([...files.map((file) => file.name), ...sources.map((source) => source.name)])).join("; ") || "No uploaded sources";
+  for (const { key } of FIELD_DEFINITIONS) fields[key].sourceFile = `Checked: ${checkedSources}`;
   for (const field of FIELD_DEFINITIONS) {
     const candidates = sources.flatMap((source) => extractCandidates(source.text, field.key).map((value) => ({ value, source })));
     const unique = Array.from(new Set(candidates.map((candidate) => candidate.value)));
     if (!unique.length) continue;
     const chosen = candidates.find((candidate) => candidate.value === unique[0])!;
     const conflict = unique.length > 1;
+    const matchedSources = Array.from(new Set(candidates.filter((candidate) => candidate.value === unique[0]).map((candidate) => candidate.source.name))).join("; ");
     fields[field.key] = {
       ...fields[field.key],
       value: conflict ? "" : chosen.value,
       originalValue: conflict ? "" : chosen.value,
       confidence: conflict ? 45 : Math.min(99, 88 + Math.min(candidates.length * 3, 10)),
       status: conflict ? "Conflict" : "Confirmed",
-      sourceFile: conflict ? candidates.map((candidate) => candidate.source.name).join("; ") : chosen.source.name,
+      sourceFile: `Checked: ${checkedSources} | Matched: ${conflict ? candidates.map((candidate) => candidate.source.name).join("; ") : matchedSources}`,
       sourcePage: chosen.source.page,
-      evidence: conflict ? `Conflicting values found: ${unique.join(" vs ")}` : `Explicit ${field.label.toLowerCase()} evidence found in ${chosen.source.name}`,
+      evidence: conflict ? `Conflicting values found: ${unique.join(" vs ")}. Checked all uploaded sources.` : `Explicit ${field.label.toLowerCase()} evidence found in ${matchedSources}. Checked all uploaded sources.`,
     };
   }
   return fields;
