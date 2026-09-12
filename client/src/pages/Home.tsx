@@ -142,8 +142,14 @@ function Stepper({ current }: { current: WorkflowStep }) {
 function PageFrame({ children }: { children: React.ReactNode }) { return <main className="mx-auto max-w-[1420px] px-5 py-7 md:px-9">{children}</main>; }
 
 export default function Home() {
-  const [screen, setScreen] = useState<Screen>("dashboard");
-  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>("upload");
+  const [screen, setScreen] = useState<Screen>(() => {
+    const saved = localStorage.getItem("split-manifest-screen");
+    return saved === "new" || saved === "history" || saved === "settings" || saved === "dashboard" ? saved : "dashboard";
+  });
+  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>(() => {
+    const saved = localStorage.getItem("split-manifest-workflow-step");
+    return saved === "extract" || saved === "cross-check" || saved === "review" || saved === "email" || saved === "outlook" || saved === "upload" ? saved : "upload";
+  });
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [fields, setFields] = useState<ShipmentFields>(() => createDemoFields());
   const [processing, setProcessing] = useState(false);
@@ -159,6 +165,13 @@ export default function Home() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => { localStorage.setItem("split-manifest-jobs", JSON.stringify(historyJobs)); }, [historyJobs]);
+  useEffect(() => { localStorage.setItem("split-manifest-screen", screen); }, [screen]);
+  useEffect(() => { localStorage.setItem("split-manifest-workflow-step", workflowStep); }, [workflowStep]);
+  useEffect(() => {
+    if (screen === "new" && uploadItems.length === 0 && workflowStep !== "upload") {
+      setWorkflowStep("upload");
+    }
+  }, [screen, uploadItems.length, workflowStep]);
 
   const requiredMissing = useMemo(() => getMissingRequiredFields(fields), [fields]);
   const containerWarning = useMemo(() => validateContainerNumber(fieldValue(fields, "container_number")), [fields]);
