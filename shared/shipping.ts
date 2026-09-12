@@ -127,13 +127,19 @@ function extractCandidates(text: string, key: FieldKey): string[] {
     vessel_name: ["Vessel Name", "Vessel", "VSL"],
     voyage_number: ["Voyage No", "Voyage", "Voy", "VYG"],
     pol: ["Port of Loading", "Port of Load", "Loading Port", "POL"],
-    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "Agent", "Shipper"],
+    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "Shipper"],
   };
-  const labelPattern = labels[key].map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const labelPattern = labels[key].slice().sort((a, b) => b.length - a.length).map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const allLabelPattern = Array.from(new Set(Object.values(labels).flat())).sort((a, b) => b.length - a.length).map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
   const values: string[] = [];
-  const labeled = new RegExp(`(?:${labelPattern})\\s*(?:[:=\\-\\t,])\\s*([^\\r\\n,;|]+)`, "gi");
+  const labeled = new RegExp(`(?:^|[\\s,|])(?:${labelPattern})\\s*(?:[:=\\t,]\\s*|\\s+)([^\\r\\n,;|]+)`, "gi");
+  const nextLabel = new RegExp(`\\s+(?:${allLabelPattern})\\b`, "i");
+  const labelOnly = new RegExp(`^(?:${allLabelPattern})$`, "i");
   for (const match of Array.from(text.matchAll(labeled))) {
-    const value = normalizeCandidate(key, match[1]);
+    const rawValue = match[1].split(nextLabel)[0];
+    if (labelOnly.test(rawValue.trim())) continue;
+    const value = normalizeCandidate(key, rawValue);
+    if (key === "agent_name" && /^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}$/.test(value)) continue;
     if (value) values.push(value);
   }
   if (key === "container_number") {
@@ -154,7 +160,16 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
     try {
       if (item.kind === "excel") {
         const workbook = XLSX.read(await item.file.arrayBuffer(), { type: "array" });
-        for (const sheetName of workbook.SheetNames) sources.push({ name: `${item.name} / ${sheetName}`, text: XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]), page: 1 });
+        for (const sheetName of workbook.SheetNames) {
+          const sheet = workbook.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" }) as string[][];
+          const csv = XLSX.utils.sheet_to_csv(sheet);
+          const rowAndNextRow = rows.map((row, rowIndex) => row.map((cell, columnIndex) => {
+            const nextRowValue = rows[rowIndex + 1]?.[columnIndex] || "";
+            return nextRowValue ? `${cell} ${nextRowValue}` : cell;
+          }).join(",")).join("\n");
+          sources.push({ name: `${item.name} / ${sheetName}`, text: `${csv}\n${rowAndNextRow}`, page: 1 });
+        }
       } else if (item.kind === "pdf") {
         sources.push(...await extractPdfText(item.file, item.name));
       } else if (item.kind === "text" || item.kind === "word") {

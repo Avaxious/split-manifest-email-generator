@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as XLSX from "xlsx";
 import {
   buildEml,
   buildSubject,
@@ -60,5 +61,28 @@ describe("shipping helpers", () => {
     ]);
     expect(fields.mbl_number.status).toBe("Conflict");
     expect(fields.mbl_number.value).toBe("");
+  });
+
+  it("extracts PDF-style fields when labels are separated by spaces", async () => {
+    const pdfText = new File(["ETD 2026/09/05 Vessel YES Voyage 26706W POL DUBAI Container Number BMOU4873674 Seal Number SEAL-1 Shipper ABC Logistics"], "Booking.pdf", { type: "application/pdf" });
+    const fields = await extractFieldsFromFiles([{ file: pdfText, name: pdfText.name, kind: "text" }]);
+    expect(fields.etd_date.value).toBe("2026/09/05");
+    expect(fields.vessel_name.value).toBe("YES");
+    expect(fields.voyage_number.value).toBe("26706W");
+    expect(fields.pol.value).toBe("DUBAI");
+    expect(fields.container_number.value).toBe("BMOU4873674");
+    expect(fields.agent_name.value).toBe("ABC Logistics");
+  });
+
+  it("extracts fields from Excel headers with values on the next row", async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([["ETD", "Vessel", "Voyage", "POL", "CNTR", "Seal", "Shipper"], ["2026/09/05", "YES", "26706W", "DUBAI", "BMOU4873674", "SEAL-2", "ABC Logistics"]]);
+    XLSX.utils.book_append_sheet(workbook, sheet, "Shipment");
+    const excel = new File([XLSX.write(workbook, { bookType: "xlsx", type: "array" })], "Shipment.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const fields = await extractFieldsFromFiles([{ file: excel, name: excel.name, kind: "excel" }]);
+    expect(fields.etd_date.value).toBe("2026/09/05");
+    expect(fields.vessel_name.value).toBe("YES");
+    expect(fields.container_number.value).toBe("BMOU4873674");
+    expect(fields.agent_name.value).toBe("ABC Logistics");
   });
 });
