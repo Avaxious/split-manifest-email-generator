@@ -167,11 +167,6 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("split-manifest-jobs", JSON.stringify(historyJobs)); }, [historyJobs]);
   useEffect(() => { localStorage.setItem("split-manifest-screen", screen); }, [screen]);
   useEffect(() => { localStorage.setItem("split-manifest-workflow-step", workflowStep); }, [workflowStep]);
-  useEffect(() => {
-    if (screen === "new" && uploadItems.length === 0 && workflowStep !== "upload") {
-      setWorkflowStep("upload");
-    }
-  }, [screen, uploadItems.length, workflowStep]);
 
   const requiredMissing = useMemo(() => getMissingRequiredFields(fields), [fields]);
   const containerWarning = useMemo(() => validateContainerNumber(fieldValue(fields, "container_number")), [fields]);
@@ -208,7 +203,7 @@ export default function Home() {
 
   async function processDocuments() {
     if (!uploadItems.length) { setErrorMessage("Add at least one supported document before processing."); return; }
-    setErrorMessage(""); setProcessing(true); setWorkflowStep("extract"); setProcessingNote("Validating file readability and extracting document text…");
+    setErrorMessage(""); setScreen("new"); setProcessing(true); setWorkflowStep("extract"); setProcessingNote("Validating file readability and extracting document text…");
     const initial = uploadItems.map((item) => ({ ...item, status: "Uploaded" as FileStatus })); setUploadItems(initial);
     for (let i = 0; i < initial.length; i += 1) {
       const current = initial[i];
