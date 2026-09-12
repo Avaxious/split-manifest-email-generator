@@ -1,3 +1,5 @@
+import * as XLSX from "xlsx";
+
 export type FieldKey =
   | "container_number"
   | "seal_number"
@@ -78,6 +80,72 @@ export function createDemoFields(sourceFile = "Demo shipment data") : ShipmentFi
       },
     ]),
   ) as ShipmentFields;
+}
+
+function sourceFieldStatus(value: string): FieldStatus {
+  return value ? "Confirmed" : "Missing";
+}
+
+function extractLabeledValue(text: string, labels: string[]): string {
+  const labelPattern = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const match = text.match(new RegExp(`(?:${labelPattern})\\s*(?:[:=\\-\\t,])\\s*([^\\r\\n,;|]+)`, "i"));
+  return match?.[1]?.trim().replace(/\s{2,}/g, " ") || "";
+}
+
+export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: string; kind: string }>): Promise<ShipmentFields> {
+  const sourceFile = files[0]?.name || "Uploaded documents";
+  const fields = createDemoFields(sourceFile);
+  const isRealSource = sourceFile !== "Demo shipment data";
+  if (isRealSource) {
+    for (const { key } of FIELD_DEFINITIONS) {
+      fields[key] = { ...fields[key], value: "", originalValue: "", confidence: 0, status: "Missing", evidence: "Not found in the uploaded source documents." };
+    }
+  }
+
+  const combined: string[] = [];
+  for (const item of files) {
+    try {
+      if (item.kind === "excel") {
+        const workbook = XLSX.read(await item.file.arrayBuffer(), { type: "array" });
+        for (const sheetName of workbook.SheetNames) {
+          combined.push(XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]));
+        }
+      } else if (item.kind === "text" || item.kind === "word") {
+        combined.push(await item.file.text());
+      }
+    } catch {
+      // Keep fields missing when a source cannot be read; never guess.
+    }
+  }
+
+  const text = combined.join("\n");
+  const labelMap: Record<FieldKey, string[]> = {
+    container_number: ["Container No", "Container Number", "CNTR No", "CNTR", "Equipment No", "Equipment Number"],
+    seal_number: ["Seal No", "Seal Number", "Seal"],
+    mbl_number: ["MBL No", "MBL", "Master BL", "Master B/L", "Master Bill of Lading"],
+    etd_date: ["ETD", "Estimated Time of Departure", "Departure Date"],
+    vessel_name: ["Vessel Name", "Vessel", "VSL"],
+    voyage_number: ["Voyage No", "Voyage", "Voy", "VYG"],
+    pol: ["Port of Loading", "Port of Load", "Loading Port", "POL"],
+    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "Agent"],
+  };
+
+  for (const field of FIELD_DEFINITIONS) {
+    const extracted = extractLabeledValue(text, labelMap[field.key]);
+    if (extracted) {
+      fields[field.key] = {
+        ...fields[field.key],
+        value: field.key === "etd_date" ? normalizeDate(extracted).value : extracted,
+        originalValue: extracted,
+        confidence: 92,
+        status: sourceFieldStatus(extracted),
+        sourceFile,
+        sourcePage: 1,
+        evidence: `Explicit ${field.label.toLowerCase()} label found in ${sourceFile}`,
+      };
+    }
+  }
+  return fields;
 }
 
 export function validateDocumentFile(file: { name: string; type?: string; size: number }): DocumentValidation {

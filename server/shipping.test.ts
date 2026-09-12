@@ -3,6 +3,7 @@ import {
   buildEml,
   buildSubject,
   createDemoFields,
+  extractFieldsFromFiles,
   getMissingRequiredFields,
   normalizeDate,
   validateContainerNumber,
@@ -34,9 +35,19 @@ describe("shipping helpers", () => {
 
   it("includes original filenames in generated Outlook-compatible EML", async () => {
     const file = new File(["%PDF-demo"], "MBL.pdf", { type: "application/pdf" });
-    const eml = await buildEml("Subject", "<p>Body</p>", "Body", [{ name: file.name, file }]);
+    const secondFile = new File(["booking"], "Booking.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const eml = await buildEml("Subject", "<p>Body</p>", "Body", [{ name: file.name, file }, { name: secondFile.name, file: secondFile }]);
     expect(eml).toContain("Content-Disposition: attachment; filename=\"MBL.pdf\"");
+    expect(eml).toContain("Content-Disposition: attachment; filename=\"Booking.xlsx\"");
     expect(eml).toContain("multipart/mixed");
     expect(eml).toContain("Subject: Subject");
+  });
+
+  it("uses explicit source labels for seal and agent instead of demo placeholders", async () => {
+    const source = new File(["Seal Number: SEAL-7788\nOur Agent: Gulf Shipping LLC"], "Manifest.txt", { type: "text/plain" });
+    const fields = await extractFieldsFromFiles([{ file: source, name: source.name, kind: "text" }]);
+    expect(fields.seal_number.value).toBe("SEAL-7788");
+    expect(fields.agent_name.value).toBe("Gulf Shipping LLC");
+    expect(fields.seal_number.status).toBe("Confirmed");
   });
 });
