@@ -55,6 +55,7 @@ type WorkflowStep = "upload" | "extract" | "cross-check" | "review" | "email" | 
 type FileStatus = "Ready" | "Uploaded" | "Analyzing" | "Analyzed" | "Error";
 type UploadItem = { id: string; file: File; kind: string; status: FileStatus; reason?: string };
 type Job = { id: string; createdAt: string; container: string; mbl: string; vessel: string; voyage: string; pol: string; status: string; outlook: string };
+type StoredUploadItem = { id: string; name: string; size: number; type: string; kind: string; status: FileStatus };
 
 type SignatureSettings = { signatureHtml: string; signatureText: string; dateFormat: string; retentionDays: string };
 
@@ -150,13 +151,26 @@ export default function Home() {
     const saved = localStorage.getItem("split-manifest-workflow-step");
     return saved === "extract" || saved === "cross-check" || saved === "review" || saved === "email" || saved === "outlook" || saved === "upload" ? saved : "upload";
   });
-  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
-  const [fields, setFields] = useState<ShipmentFields>(() => createDemoFields());
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("split-manifest-upload-items") || "[]") as StoredUploadItem[];
+      return stored.map((item) => ({ id: item.id, file: new File([""], item.name, { type: item.type }), kind: item.kind, status: item.status }));
+    } catch {
+      return [];
+    }
+  });
+  const [fields, setFields] = useState<ShipmentFields>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("split-manifest-fields") || "null") || createDemoFields();
+    } catch {
+      return createDemoFields();
+    }
+  });
   const [processing, setProcessing] = useState(false);
   const [processingNote, setProcessingNote] = useState("Demo mode is ready — no AI credentials required.");
-  const [emailSubject, setEmailSubject] = useState("");
-  const [emailHtml, setEmailHtml] = useState("");
-  const [emailText, setEmailText] = useState("");
+  const [emailSubject, setEmailSubject] = useState(() => localStorage.getItem("split-manifest-email-subject") || "");
+  const [emailHtml, setEmailHtml] = useState(() => localStorage.getItem("split-manifest-email-html") || "");
+  const [emailText, setEmailText] = useState(() => localStorage.getItem("split-manifest-email-text") || "");
   const [historyJobs, setHistoryJobs] = useState<Job[]>(() => { try { return JSON.parse(localStorage.getItem("split-manifest-jobs") || "null") || starterJobs; } catch { return starterJobs; } });
   const [settings, setSettings] = useState<SignatureSettings>(() => { try { return JSON.parse(localStorage.getItem("split-manifest-settings") || "null") || defaultSettings; } catch { return defaultSettings; } });
   const [historyQuery, setHistoryQuery] = useState("");
@@ -167,6 +181,14 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("split-manifest-jobs", JSON.stringify(historyJobs)); }, [historyJobs]);
   useEffect(() => { localStorage.setItem("split-manifest-screen", screen); }, [screen]);
   useEffect(() => { localStorage.setItem("split-manifest-workflow-step", workflowStep); }, [workflowStep]);
+  useEffect(() => {
+    const stored: StoredUploadItem[] = uploadItems.map((item) => ({ id: item.id, name: item.file.name, size: item.file.size, type: item.file.type, kind: item.kind, status: item.status }));
+    localStorage.setItem("split-manifest-upload-items", JSON.stringify(stored));
+  }, [uploadItems]);
+  useEffect(() => { localStorage.setItem("split-manifest-fields", JSON.stringify(fields)); }, [fields]);
+  useEffect(() => { localStorage.setItem("split-manifest-email-subject", emailSubject); }, [emailSubject]);
+  useEffect(() => { localStorage.setItem("split-manifest-email-html", emailHtml); }, [emailHtml]);
+  useEffect(() => { localStorage.setItem("split-manifest-email-text", emailText); }, [emailText]);
 
   const requiredMissing = useMemo(() => getMissingRequiredFields(fields), [fields]);
   const containerWarning = useMemo(() => validateContainerNumber(fieldValue(fields, "container_number")), [fields]);
