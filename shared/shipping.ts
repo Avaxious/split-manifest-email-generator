@@ -121,13 +121,13 @@ function normalizeCandidate(key: FieldKey, value: string): string {
 function extractCandidates(text: string, key: FieldKey): string[] {
   const labels: Record<FieldKey, string[]> = {
     container_number: ["Container No", "Container Number", "Container", "CNTR No", "CNTR", "Equipment No", "Equipment Number"],
-    seal_number: ["Seal No", "Seal Number", "Seal"],
+    seal_number: ["Seal No", "Seal Number", "SealNo", "Seal"],
     mbl_number: ["MBL No", "MBL Number", "MBL", "Master BL", "Master B/L", "Master Bill of Lading"],
-    etd_date: ["ETD", "ETD Date", "Estimated Time of Departure", "Departure Date"],
-    vessel_name: ["Vessel Name", "Vessel", "VSL", "Ship Name"],
-    voyage_number: ["Voyage No", "Voyage Number", "Voyage", "Voy", "VYG"],
-    pol: ["Port of Loading", "Port of Load", "Loading Port", "POL", "Load Port"],
-    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "Shipper Name", "Shipper", "S/O"],
+    etd_date: ["ETD", "ETD Date", "BLIssueDateH", "BLIssueDateM", "Estimated Time of Departure", "Departure Date"],
+    vessel_name: ["Vessel Name", "VesselName", "Vessel", "VSL", "Ship Name"],
+    voyage_number: ["Voyage No", "Voyage Number", "VoyageNo", "Voyage", "Voy", "VYG"],
+    pol: ["Port of Loading", "Port of Load", "Loading Port", "POLText", "POL", "Load Port"],
+    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "ShipperText", "Shipper Name", "Shipper", "S/O"],
   };
   const labelPattern = labels[key].slice().sort((a, b) => b.length - a.length).map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
   const allLabelPattern = Array.from(new Set(Object.values(labels).flat())).sort((a, b) => b.length - a.length).map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
@@ -140,6 +140,7 @@ function extractCandidates(text: string, key: FieldKey): string[] {
     if (labelOnly.test(rawValue.trim())) continue;
     const value = normalizeCandidate(key, rawValue);
     if (key === "agent_name" && /^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}$/.test(value)) continue;
+    if (key === "pol" && /^\d+$/.test(value)) continue;
     if (value) values.push(value);
   }
   if (key === "container_number") {
@@ -168,7 +169,9 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
             const nextRowValue = rows[rowIndex + 1]?.[columnIndex] || "";
             return nextRowValue ? `${cell} ${nextRowValue}` : cell;
           }).join(",")).join("\n");
-          sources.push({ name: `${item.name} / ${sheetName}`, text: `${csv}\n${rowAndNextRow}`, page: 1 });
+          const headers = rows[0] || [];
+          const headerValueRows = rows.slice(1).map((row) => headers.map((header, index) => header && row[index] !== "" ? `${header}: ${row[index]}` : "").filter(Boolean).join("\n")).join("\n");
+          sources.push({ name: `${item.name} / ${sheetName}`, text: headerValueRows || `${csv}\n${rowAndNextRow}`, page: 1 });
         }
       } else if (item.kind === "pdf") {
         sources.push(...await extractPdfText(item.file, item.name));
@@ -240,6 +243,8 @@ export function normalizeDate(input: string): { value: string; ambiguous: boolea
   }
   const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (slash) return { value: raw, ambiguous: true };
+  const shortYear = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (shortYear) return { value: `20${shortYear[3]}/${shortYear[1].padStart(2, "0")}/${shortYear[2].padStart(2, "0")}`, ambiguous: false };
   return { value: raw, ambiguous: true };
 }
 

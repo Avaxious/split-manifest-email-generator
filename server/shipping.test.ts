@@ -87,4 +87,20 @@ describe("shipping helpers", () => {
     expect(fields.container_number.value).toBe("BMOU4873674");
     expect(fields.agent_name.value).toBe("ABC Logistics");
   });
+
+  it("extracts the supplied logistics workbook schema directly", async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["MBL", "BLIssueDateH", "POL", "POLText", "ShipperText", "CNTR", "SealNo"],
+      ["SIJEAAEC26005471A", "9/5/26", 29, "Jebel Ali", "LARA SHIPPING LINE LLC", "BMOU4873674", "CSL013491"],
+    ]);
+    XLSX.utils.book_append_sheet(workbook, sheet, "Sheet1");
+    const excel = new File([XLSX.write(workbook, { bookType: "xlsx", type: "array" })], "BMOU4873674-40X11.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const fields = await extractFieldsFromFiles([{ file: excel, name: excel.name, kind: "excel" }]);
+    expect(fields.container_number.value).toBe("BMOU4873674");
+    expect(fields.seal_number.value).toBe("CSL013491");
+    expect(fields.etd_date.value).toBe("2026/09/05");
+    expect(fields.pol.value).toBe("Jebel Ali");
+    expect(fields.agent_name.value).toBe("LARA SHIPPING LINE LLC");
+  });
 });
