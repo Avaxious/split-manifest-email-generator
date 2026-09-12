@@ -50,4 +50,15 @@ describe("shipping helpers", () => {
     expect(fields.agent_name.value).toBe("Gulf Shipping LLC");
     expect(fields.seal_number.status).toBe("Confirmed");
   });
+
+  it("flags conflicting values found across documents", async () => {
+    const first = new File(["MBL: MASTER-001\nContainer: BMOU4873674"], "Manifest.txt", { type: "text/plain" });
+    const second = new File(["MBL: MASTER-002\nContainer: BMOU4873674"], "MBL.txt", { type: "text/plain" });
+    const fields = await extractFieldsFromFiles([
+      { file: first, name: first.name, kind: "text" },
+      { file: second, name: second.name, kind: "text" },
+    ]);
+    expect(fields.mbl_number.status).toBe("Conflict");
+    expect(fields.mbl_number.value).toBe("");
+  });
 });

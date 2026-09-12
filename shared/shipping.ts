@@ -92,34 +92,34 @@ function extractLabeledValue(text: string, labels: string[]): string {
   return match?.[1]?.trim().replace(/\s{2,}/g, " ") || "";
 }
 
-export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: string; kind: string }>): Promise<ShipmentFields> {
-  const sourceFile = files[0]?.name || "Uploaded documents";
-  const fields = createDemoFields(sourceFile);
-  const isRealSource = sourceFile !== "Demo shipment data";
-  if (isRealSource) {
-    for (const { key } of FIELD_DEFINITIONS) {
-      fields[key] = { ...fields[key], value: "", originalValue: "", confidence: 0, status: "Missing", evidence: "Not found in the uploaded source documents." };
-    }
-  }
+type SourceText = { name: string; text: string; page: number };
 
-  const combined: string[] = [];
-  for (const item of files) {
-    try {
-      if (item.kind === "excel") {
-        const workbook = XLSX.read(await item.file.arrayBuffer(), { type: "array" });
-        for (const sheetName of workbook.SheetNames) {
-          combined.push(XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]));
-        }
-      } else if (item.kind === "text" || item.kind === "word") {
-        combined.push(await item.file.text());
-      }
-    } catch {
-      // Keep fields missing when a source cannot be read; never guess.
+async function extractPdfText(file: Blob, name: string): Promise<SourceText[]> {
+  try {
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), disableWorker: true } as any).promise;
+    const pages: SourceText[] = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ");
+      pages.push({ name, text, page: pageNumber });
     }
+    return pages;
+  } catch {
+    return [];
   }
+}
 
-  const text = combined.join("\n");
-  const labelMap: Record<FieldKey, string[]> = {
+function normalizeCandidate(key: FieldKey, value: string): string {
+  const cleaned = value.trim().replace(/\s{2,}/g, " ");
+  if (key === "container_number") return cleaned.replace(/\s+/g, "").toUpperCase();
+  if (key === "etd_date") return normalizeDate(cleaned).value;
+  return cleaned;
+}
+
+function extractCandidates(text: string, key: FieldKey): string[] {
+  const labels: Record<FieldKey, string[]> = {
     container_number: ["Container No", "Container Number", "CNTR No", "CNTR", "Equipment No", "Equipment Number"],
     seal_number: ["Seal No", "Seal Number", "Seal"],
     mbl_number: ["MBL No", "MBL", "Master BL", "Master B/L", "Master Bill of Lading"],
@@ -127,23 +127,60 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
     vessel_name: ["Vessel Name", "Vessel", "VSL"],
     voyage_number: ["Voyage No", "Voyage", "Voy", "VYG"],
     pol: ["Port of Loading", "Port of Load", "Loading Port", "POL"],
-    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "Agent"],
+    agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "Agent", "Shipper"],
   };
+  const labelPattern = labels[key].map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const values: string[] = [];
+  const labeled = new RegExp(`(?:${labelPattern})\\s*(?:[:=\\-\\t,])\\s*([^\\r\\n,;|]+)`, "gi");
+  for (const match of Array.from(text.matchAll(labeled))) {
+    const value = normalizeCandidate(key, match[1]);
+    if (value) values.push(value);
+  }
+  if (key === "container_number") {
+    for (const match of Array.from(text.matchAll(/\b[A-Z]{4}\s?\d{7}\b/gi))) values.push(normalizeCandidate(key, match[0]));
+  }
+  return Array.from(new Set(values));
+}
+
+export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: string; kind: string }>): Promise<ShipmentFields> {
+  const sourceFile = files[0]?.name || "Uploaded documents";
+  const fields = createDemoFields(sourceFile);
+  for (const { key } of FIELD_DEFINITIONS) {
+    fields[key] = { ...fields[key], value: "", originalValue: "", confidence: 0, status: "Missing", evidence: "Not found in the uploaded source documents." };
+  }
+
+  const sources: SourceText[] = [];
+  for (const item of files) {
+    try {
+      if (item.kind === "excel") {
+        const workbook = XLSX.read(await item.file.arrayBuffer(), { type: "array" });
+        for (const sheetName of workbook.SheetNames) sources.push({ name: `${item.name} / ${sheetName}`, text: XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]), page: 1 });
+      } else if (item.kind === "pdf") {
+        sources.push(...await extractPdfText(item.file, item.name));
+      } else if (item.kind === "text" || item.kind === "word") {
+        sources.push({ name: item.name, text: await item.file.text(), page: 1 });
+      }
+    } catch {
+      // Leave unavailable source fields missing; never fabricate values.
+    }
+  }
 
   for (const field of FIELD_DEFINITIONS) {
-    const extracted = extractLabeledValue(text, labelMap[field.key]);
-    if (extracted) {
-      fields[field.key] = {
-        ...fields[field.key],
-        value: field.key === "etd_date" ? normalizeDate(extracted).value : extracted,
-        originalValue: extracted,
-        confidence: 92,
-        status: sourceFieldStatus(extracted),
-        sourceFile,
-        sourcePage: 1,
-        evidence: `Explicit ${field.label.toLowerCase()} label found in ${sourceFile}`,
-      };
-    }
+    const candidates = sources.flatMap((source) => extractCandidates(source.text, field.key).map((value) => ({ value, source })));
+    const unique = Array.from(new Set(candidates.map((candidate) => candidate.value)));
+    if (!unique.length) continue;
+    const chosen = candidates.find((candidate) => candidate.value === unique[0])!;
+    const conflict = unique.length > 1;
+    fields[field.key] = {
+      ...fields[field.key],
+      value: conflict ? "" : chosen.value,
+      originalValue: conflict ? "" : chosen.value,
+      confidence: conflict ? 45 : Math.min(99, 88 + Math.min(candidates.length * 3, 10)),
+      status: conflict ? "Conflict" : "Confirmed",
+      sourceFile: conflict ? candidates.map((candidate) => candidate.source.name).join("; ") : chosen.source.name,
+      sourcePage: chosen.source.page,
+      evidence: conflict ? `Conflicting values found: ${unique.join(" vs ")}` : `Explicit ${field.label.toLowerCase()} evidence found in ${chosen.source.name}`,
+    };
   }
   return fields;
 }
