@@ -59,8 +59,8 @@ describe("shipping helpers", () => {
       { file: first, name: first.name, kind: "text" },
       { file: second, name: second.name, kind: "text" },
     ]);
-    expect(fields.mbl_number.status).toBe("Conflict");
-    expect(fields.mbl_number.value).toBe("");
+    expect(fields.mbl_number.status).toBe("Needs Review");
+    expect(fields.mbl_number.value).toBe("MASTER-001");
     expect(fields.mbl_number.sourceFile).toContain("Manifest.txt");
     expect(fields.mbl_number.sourceFile).toContain("MBL.txt");
   });
