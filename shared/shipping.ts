@@ -24,7 +24,7 @@ export type ShipmentField = {
   evidence: string;
 };
 
-export type ShipmentFields = Record<FieldKey, ShipmentField>;
+export type ShipmentFields = Record<FieldKey, ShipmentField> & { containers?: string[] };
 
 export type DocumentValidation = {
   valid: boolean;
@@ -64,7 +64,7 @@ export const DEMO_VALUES: Record<FieldKey, string> = {
 };
 
 export function createDemoFields(sourceFile = "Demo shipment data") : ShipmentFields {
-  return Object.fromEntries(
+  const fields = Object.fromEntries(
     FIELD_DEFINITIONS.map(({ key, label }) => [
       key,
       {
@@ -79,7 +79,9 @@ export function createDemoFields(sourceFile = "Demo shipment data") : ShipmentFi
         evidence: sourceFile === "Demo shipment data" ? "Demo mode — not extracted from a real document" : `Detected near the ${label.toLowerCase()} label`,
       },
     ]),
-  ) as ShipmentFields;
+  ) as unknown as ShipmentFields;
+  fields.containers = [DEMO_VALUES.container_number];
+  return fields;
 }
 
 function sourceFieldStatus(value: string): FieldStatus {
@@ -192,8 +194,9 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
     const mblStems = field.key === "mbl_number" ? unique.map((value) => value.match(/^(.+?)[A-Z]$/)?.[1] ?? "") : [];
     const sharedMblStem = mblStems.length > 1 && mblStems.every((stem) => stem && stem === mblStems[0]) ? mblStems[0] : "";
     const chosen = candidates.find((candidate) => candidate.value === unique[0])!;
-    const multipleValues = unique.length > 1 && !sharedMblStem;
-    const resolvedValue = sharedMblStem || chosen.value;
+    const isContainerList = field.key === "container_number";
+    const multipleValues = unique.length > 1 && !sharedMblStem && !isContainerList;
+    const resolvedValue = isContainerList ? unique.join(" / ") : sharedMblStem || chosen.value;
     const matchedSources = Array.from(new Set(candidates.filter((candidate) => candidate.value === unique[0]).map((candidate) => candidate.source.name))).join("; ");
     fields[field.key] = {
       ...fields[field.key],
@@ -203,8 +206,9 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
       status: multipleValues ? "Needs Review" : "Confirmed",
       sourceFile: `Checked: ${checkedSources} | Matched: ${multipleValues ? candidates.map((candidate) => candidate.source.name).join("; ") : matchedSources}`,
       sourcePage: chosen.source.page,
-      evidence: multipleValues ? `Multiple values detected: ${unique.join(" vs ")}. Review the selected value; all uploaded sources were checked.` : sharedMblStem ? `Consolidated ${unique.length} line-item MBL values to shared master number ${sharedMblStem}. Checked all uploaded sources.` : `Explicit ${field.label.toLowerCase()} evidence found in ${matchedSources}. Checked all uploaded sources.`,
+      evidence: isContainerList ? `Retained ${unique.length} container number(s) from all uploaded sources: ${unique.join(", ")}. Checked all uploaded sources.` : multipleValues ? `Multiple values detected: ${unique.join(" vs ")}. Review the selected value; all uploaded sources were checked.` : sharedMblStem ? `Consolidated ${unique.length} line-item MBL values to shared master number ${sharedMblStem}. Checked all uploaded sources.` : `Explicit ${field.label.toLowerCase()} evidence found in ${matchedSources}. Checked all uploaded sources.`,
     };
+    if (isContainerList) fields.containers = unique;
   }
   return fields;
 }
@@ -265,7 +269,8 @@ export function getMissingRequiredFields(fields: ShipmentFields): string[] {
 
 export function buildSubject(fields: ShipmentFields): string {
   const value = (key: FieldKey) => fields[key].value.trim();
-  return `SPLIT MANIFEST // CNTR: ${value("container_number")} // VSL: ${value("vessel_name")} ${value("voyage_number")} // MBL: ${value("mbl_number")} // ETD: ${value("etd_date")} // POL: ${value("pol")}`;
+  const containers = (fields.containers?.length ? fields.containers : value("container_number").split(" /").map((item) => item.trim()).filter(Boolean)).join(" / ");
+  return `SPLIT MANIFEST // CNTR: ${containers} // VSL: ${value("vessel_name")} ${value("voyage_number")} // MBL: ${value("mbl_number")} // ETD: ${value("etd_date")} // POL: ${value("pol")}`;
 }
 
 function escapeHtml(value: string): string {
@@ -274,12 +279,13 @@ function escapeHtml(value: string): string {
 
 export function buildPlainTextBody(fields: ShipmentFields, signatureText: string): string {
   const value = (key: FieldKey) => fields[key].value.trim() || "Not Found";
+  const containers = fields.containers?.length ? fields.containers.join(", ") : value("container_number");
   return [
     "Dear Team,",
     "",
     "Please find attached the split manifest for the below shipment.",
     "",
-    `Container Number: ${value("container_number")}`,
+    `Container Number(s): ${containers}`,
     `Seal Number: ${value("seal_number")}`,
     `MBL Number: ${value("mbl_number")}`,
     `ETD: ${value("etd_date")}`,
@@ -295,8 +301,9 @@ export function buildPlainTextBody(fields: ShipmentFields, signatureText: string
 
 export function buildHtmlBody(fields: ShipmentFields, signatureHtml: string): string {
   const value = (key: FieldKey) => escapeHtml(fields[key].value.trim() || "Not Found");
+  const containers = escapeHtml(fields.containers?.length ? fields.containers.join(", ") : fields.container_number.value.trim() || "Not Found");
   const rows = [
-    ["Container Number", value("container_number")],
+    ["Container Number(s)", containers],
     ["Seal Number", value("seal_number")],
     ["MBL Number", value("mbl_number")],
     ["ETD", value("etd_date")],
@@ -329,13 +336,15 @@ export async function buildEml(
   htmlBody: string,
   textBody: string,
   attachments: Array<{ name: string; file: Blob }>,
+  recipients: { to?: string[]; cc?: string[] } = {},
 ): Promise<string> {
   const mixedBoundary = `=_SplitManifestMixed_${Date.now()}`;
   const altBoundary = `=_SplitManifestAlt_${Date.now()}`;
   const lines = [
     "MIME-Version: 1.0",
     "From: ",
-    "To: ",
+    `To: ${(recipients.to ?? []).join(", ")}`,
+    `Cc: ${(recipients.cc ?? []).join(", ")}`,
     `Subject: ${subject}`,
     "Content-Type: multipart/mixed; boundary=\"" + mixedBoundary + "\"",
     "X-Split-Manifest-Mode: Outlook-compatible draft preparation only",

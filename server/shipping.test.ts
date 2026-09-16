@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import {
   buildEml,
   buildSubject,
+  buildPlainTextBody,
   createDemoFields,
   extractFieldsFromFiles,
   getMissingRequiredFields,
@@ -37,11 +38,13 @@ describe("shipping helpers", () => {
   it("includes original filenames in generated Outlook-compatible EML", async () => {
     const file = new File(["%PDF-demo"], "MBL.pdf", { type: "application/pdf" });
     const secondFile = new File(["booking"], "Booking.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const eml = await buildEml("Subject", "<p>Body</p>", "Body", [{ name: file.name, file }, { name: secondFile.name, file: secondFile }]);
+    const eml = await buildEml("Subject", "<p>Body</p>", "Body", [{ name: file.name, file }, { name: secondFile.name, file: secondFile }], { to: ["agent1@example.com", "agent2@example.com"], cc: ["kaivan@arameshabi.com"] });
     expect(eml).toContain("Content-Disposition: attachment; filename=\"MBL.pdf\"");
     expect(eml).toContain("Content-Disposition: attachment; filename=\"Booking.xlsx\"");
     expect(eml).toContain("multipart/mixed");
     expect(eml).toContain("Subject: Subject");
+    expect(eml).toContain("To: agent1@example.com, agent2@example.com");
+    expect(eml).toContain("Cc: kaivan@arameshabi.com");
   });
 
   it("uses explicit source labels for seal and agent instead of demo placeholders", async () => {
@@ -117,5 +120,22 @@ describe("shipping helpers", () => {
     const fields = await extractFieldsFromFiles([{ file: excel, name: excel.name, kind: "excel" }]);
     expect(fields.mbl_number.status).toBe("Confirmed");
     expect(fields.mbl_number.value).toBe("SIJEAAEC26005471");
+  });
+
+  it("retains containers from multiple Excel files under one MBL", async () => {
+    const makeExcel = (name: string, container: string) => {
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["MBL", "CNTR"], ["ABC123456", container]]), "Manifest");
+      return new File([XLSX.write(workbook, { bookType: "xlsx", type: "array" })], name, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    };
+    const first = makeExcel("container-1.xlsx", "MSKU1234567");
+    const second = makeExcel("container-2.xlsx", "TGHU7654321");
+    const fields = await extractFieldsFromFiles([
+      { file: first, name: first.name, kind: "excel" },
+      { file: second, name: second.name, kind: "excel" },
+    ]);
+    expect(fields.containers).toEqual(["MSKU1234567", "TGHU7654321"]);
+    expect(buildSubject(fields)).toContain("MSKU1234567 / TGHU7654321");
+    expect(buildPlainTextBody(fields, "")).toContain("MSKU1234567, TGHU7654321");
   });
 });
