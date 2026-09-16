@@ -189,18 +189,21 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
     const candidates = sources.flatMap((source) => extractCandidates(source.text, field.key).map((value) => ({ value, source })));
     const unique = Array.from(new Set(candidates.map((candidate) => candidate.value)));
     if (!unique.length) continue;
+    const mblStems = field.key === "mbl_number" ? unique.map((value) => value.match(/^(.+?)[A-Z]$/)?.[1] ?? "") : [];
+    const sharedMblStem = mblStems.length > 1 && mblStems.every((stem) => stem && stem === mblStems[0]) ? mblStems[0] : "";
     const chosen = candidates.find((candidate) => candidate.value === unique[0])!;
-    const conflict = unique.length > 1;
+    const conflict = unique.length > 1 && !sharedMblStem;
+    const resolvedValue = sharedMblStem || chosen.value;
     const matchedSources = Array.from(new Set(candidates.filter((candidate) => candidate.value === unique[0]).map((candidate) => candidate.source.name))).join("; ");
     fields[field.key] = {
       ...fields[field.key],
-      value: conflict ? "" : chosen.value,
-      originalValue: conflict ? "" : chosen.value,
+      value: conflict ? "" : resolvedValue,
+      originalValue: conflict ? "" : resolvedValue,
       confidence: conflict ? 45 : Math.min(99, 88 + Math.min(candidates.length * 3, 10)),
       status: conflict ? "Conflict" : "Confirmed",
       sourceFile: `Checked: ${checkedSources} | Matched: ${conflict ? candidates.map((candidate) => candidate.source.name).join("; ") : matchedSources}`,
       sourcePage: chosen.source.page,
-      evidence: conflict ? `Conflicting values found: ${unique.join(" vs ")}. Checked all uploaded sources.` : `Explicit ${field.label.toLowerCase()} evidence found in ${matchedSources}. Checked all uploaded sources.`,
+      evidence: conflict ? `Conflicting values found: ${unique.join(" vs ")}. Checked all uploaded sources.` : sharedMblStem ? `Consolidated ${unique.length} line-item MBL values to shared master number ${sharedMblStem}. Checked all uploaded sources.` : `Explicit ${field.label.toLowerCase()} evidence found in ${matchedSources}. Checked all uploaded sources.`,
     };
   }
   return fields;

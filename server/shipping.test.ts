@@ -103,4 +103,19 @@ describe("shipping helpers", () => {
     expect(fields.pol.value).toBe("Jebel Ali");
     expect(fields.agent_name.value).toBe("LARA SHIPPING LINE LLC");
   });
+
+  it("consolidates repeated line-item MBL suffixes into one master number", async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["MBL", "CNTR"],
+      ["SIJEAAEC26005471A", "BMOU4873674"],
+      ["SIJEAAEC26005471B", "BMOU4873674"],
+      ["SIJEAAEC26005471C", "BMOU4873674"],
+    ]);
+    XLSX.utils.book_append_sheet(workbook, sheet, "Sheet1");
+    const excel = new File([XLSX.write(workbook, { bookType: "xlsx", type: "array" })], "line-items.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const fields = await extractFieldsFromFiles([{ file: excel, name: excel.name, kind: "excel" }]);
+    expect(fields.mbl_number.status).toBe("Confirmed");
+    expect(fields.mbl_number.value).toBe("SIJEAAEC26005471");
+  });
 });
