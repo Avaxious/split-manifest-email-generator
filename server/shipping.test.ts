@@ -138,4 +138,20 @@ describe("shipping helpers", () => {
     expect(buildSubject(fields)).toContain("MSKU1234567 / TGHU7654321");
     expect(buildPlainTextBody(fields, "")).toContain("MSKU1234567, TGHU7654321");
   });
+
+  it("extracts ETD, vessel, voyage, and seal per container from MBL-style Excel headers", async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["MBL", "ETDText", "VesselText", "VoyageText", "CNTR", "SealNo"],
+      ["ABC123456", "2026/09/05", "OCEAN STAR", "W123", "MSKU1234567", "SEAL-001"],
+      ["ABC123456", "2026/09/05", "OCEAN STAR", "W123", "TGHU7654321", "SEAL-002"],
+    ]);
+    XLSX.utils.book_append_sheet(workbook, sheet, "MBL");
+    const excel = new File([XLSX.write(workbook, { bookType: "xlsx", type: "array" })], "MBL.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const fields = await extractFieldsFromFiles([{ file: excel, name: excel.name, kind: "excel" }]);
+    expect(fields.etd_date.value).toBe("2026/09/05");
+    expect(fields.vessel_name.value).toBe("OCEAN STAR");
+    expect(fields.voyage_number.value).toBe("W123");
+    expect(fields.containerSeals).toEqual([{ container: "MSKU1234567", seal: "SEAL-001" }, { container: "TGHU7654321", seal: "SEAL-002" }]);
+  });
 });

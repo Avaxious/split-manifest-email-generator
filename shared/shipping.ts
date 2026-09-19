@@ -24,7 +24,7 @@ export type ShipmentField = {
   evidence: string;
 };
 
-export type ShipmentFields = Record<FieldKey, ShipmentField> & { containers?: string[] };
+export type ShipmentFields = Record<FieldKey, ShipmentField> & { containers?: string[]; containerSeals?: Array<{ container: string; seal: string }> };
 
 export type DocumentValidation = {
   valid: boolean;
@@ -81,6 +81,7 @@ export function createDemoFields(sourceFile = "Demo shipment data") : ShipmentFi
     ]),
   ) as unknown as ShipmentFields;
   fields.containers = [DEMO_VALUES.container_number];
+  fields.containerSeals = [{ container: DEMO_VALUES.container_number, seal: DEMO_VALUES.seal_number }];
   return fields;
 }
 
@@ -123,11 +124,11 @@ function normalizeCandidate(key: FieldKey, value: string): string {
 function extractCandidates(text: string, key: FieldKey): string[] {
   const labels: Record<FieldKey, string[]> = {
     container_number: ["Container No", "Container Number", "Container", "CNTR No", "CNTR", "Equipment No", "Equipment Number"],
-    seal_number: ["Seal No", "Seal Number", "SealNo", "Seal"],
+    seal_number: ["Seal No", "Seal Number", "SealNo", "SealText", "Seal"],
     mbl_number: ["MBL No", "MBL Number", "MBL", "Master BL", "Master B/L", "Master Bill of Lading"],
-    etd_date: ["ETD", "ETD Date", "BLIssueDateH", "BLIssueDateM", "Estimated Time of Departure", "Departure Date"],
-    vessel_name: ["Vessel Name", "VesselName", "Vessel", "VSL", "Ship Name"],
-    voyage_number: ["Voyage No", "Voyage Number", "VoyageNo", "Voyage", "Voy", "VYG"],
+    etd_date: ["ETD", "ETD Date", "ETDDate", "ETDText", "BLIssueDateH", "BLIssueDateM", "Estimated Time of Departure", "Departure Date"],
+    vessel_name: ["Vessel Name", "VesselName", "VesselText", "Vessel", "VSL", "Ship Name"],
+    voyage_number: ["Voyage No", "Voyage Number", "VoyageNo", "VoyageText", "Voyage", "Voy", "VYG"],
     pol: ["Port of Loading", "Port of Load", "Loading Port", "POLText", "POL", "Load Port"],
     agent_name: ["Our Agent", "Local Agent", "Shipping Agent", "ShipperText", "Shipper Name", "Shipper", "S/O"],
   };
@@ -159,6 +160,7 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
   }
 
   const sources: SourceText[] = [];
+  const containerSeals: Array<{ container: string; seal: string }> = [];
   for (const item of files) {
     try {
       if (item.kind === "excel") {
@@ -172,6 +174,16 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
             return nextRowValue ? `${cell} ${nextRowValue}` : cell;
           }).join(",")).join("\n");
           const headers = rows[0] || [];
+          const normalizedHeaders = headers.map((header) => String(header).toLowerCase().replace(/[^a-z0-9]/g, ""));
+          const containerColumn = normalizedHeaders.findIndex((header) => ["cntr", "container", "containerno", "containernumber", "equipmentno"].includes(header));
+          const sealColumn = normalizedHeaders.findIndex((header) => ["seal", "sealno", "sealnumber", "sealtext"].includes(header));
+          if (containerColumn >= 0 && sealColumn >= 0) {
+            rows.slice(1).forEach((row) => {
+              const container = normalizeCandidate("container_number", String(row[containerColumn] ?? ""));
+              const seal = String(row[sealColumn] ?? "").trim();
+              if (/^[A-Z]{4}\d{7}$/.test(container) && seal) containerSeals.push({ container, seal });
+            });
+          }
           const headerValueRows = rows.slice(1).map((row) => headers.map((header, index) => header && row[index] !== "" ? `${header}: ${row[index]}` : "").filter(Boolean).join("\n")).join("\n");
           sources.push({ name: `${item.name} / ${sheetName}`, text: headerValueRows || `${csv}\n${rowAndNextRow}`, page: 1 });
         }
@@ -187,6 +199,7 @@ export async function extractFieldsFromFiles(files: Array<{ file: Blob; name: st
 
   const checkedSources = Array.from(new Set([...files.map((file) => file.name), ...sources.map((source) => source.name)])).join("; ") || "No uploaded sources";
   for (const { key } of FIELD_DEFINITIONS) fields[key].sourceFile = `Checked: ${checkedSources}`;
+  fields.containerSeals = Array.from(new Map(containerSeals.map((item) => [`${item.container}:${item.seal}`, item])).values());
   for (const field of FIELD_DEFINITIONS) {
     const candidates = sources.flatMap((source) => extractCandidates(source.text, field.key).map((value) => ({ value, source })));
     const unique = Array.from(new Set(candidates.map((candidate) => candidate.value)));
@@ -280,13 +293,14 @@ function escapeHtml(value: string): string {
 export function buildPlainTextBody(fields: ShipmentFields, signatureText: string): string {
   const value = (key: FieldKey) => fields[key].value.trim() || "Not Found";
   const containers = fields.containers?.length ? fields.containers.join(", ") : value("container_number");
+  const seals = fields.containerSeals?.length ? fields.containerSeals.map((item) => `${item.container}: ${item.seal}`).join(", ") : value("seal_number");
   return [
     "Dear Team,",
     "",
     "Please find attached the split manifest for the below shipment.",
     "",
     `Container Number(s): ${containers}`,
-    `Seal Number: ${value("seal_number")}`,
+    `Seal Number(s): ${seals}`,
     `MBL Number: ${value("mbl_number")}`,
     `ETD: ${value("etd_date")}`,
     `Vessel / Voyage: ${value("vessel_name")} ${value("voyage_number")}`,
@@ -302,9 +316,10 @@ export function buildPlainTextBody(fields: ShipmentFields, signatureText: string
 export function buildHtmlBody(fields: ShipmentFields, signatureHtml: string): string {
   const value = (key: FieldKey) => escapeHtml(fields[key].value.trim() || "Not Found");
   const containers = escapeHtml(fields.containers?.length ? fields.containers.join(", ") : fields.container_number.value.trim() || "Not Found");
+  const seals = escapeHtml(fields.containerSeals?.length ? fields.containerSeals.map((item) => `${item.container}: ${item.seal}`).join(", ") : fields.seal_number.value.trim() || "Not Found");
   const rows = [
     ["Container Number(s)", containers],
-    ["Seal Number", value("seal_number")],
+    ["Seal Number(s)", seals],
     ["MBL Number", value("mbl_number")],
     ["ETD", value("etd_date")],
     ["Vessel / Voyage", `${value("vessel_name")} ${value("voyage_number")}`],

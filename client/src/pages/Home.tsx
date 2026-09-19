@@ -308,7 +308,7 @@ export default function Home() {
     if (missing.length) { setErrorMessage(`Cannot generate email. Missing required field${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}.`); return; }
     if (conflictingFields.length) { setErrorMessage(`Cannot generate email. Resolve conflicting value${conflictingFields.length > 1 ? "s" : ""}: ${conflictingFields.join(", ")}.`); return; }
     if (!fieldValue(fields, "container_number").split(" /").every((container) => validateContainerNumber(container.trim()).valid)) { setErrorMessage("One or more container numbers may be invalid. Correct them before continuing."); return; }
-    if (!recipientGroups.length) { setErrorMessage("Create a TO recipient group before generating the email."); navigate("settings"); return; }
+    if (!recipientGroups.length) { setErrorMessage("Create a TO recipient group in Settings, then return here to generate the email."); return; }
     if (!selectedRecipientGroup) { setErrorMessage("Please select the recipient group for the TO field."); return; }
     const subject = buildSubject(fields);
     setEmailSubject(subject); setEmailHtml(buildHtmlBody(fields, settings.signatureHtml)); setEmailText(buildPlainTextBody(fields, settings.signatureText)); setWorkflowStep("email"); setErrorMessage("");
